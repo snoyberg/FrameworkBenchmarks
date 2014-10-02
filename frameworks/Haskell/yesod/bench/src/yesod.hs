@@ -33,6 +33,10 @@ import           Yesod                    hiding (Field)
 mkPersist sqlSettings { mpsGeneric = True } [persistLowerCase|
 World sql=World
     randomNumber Int sql=randomNumber
+#ifdef MONGODB
+    id           Int64
+    UniqueId
+#endif
 |]
 
 data App = App
@@ -49,8 +53,10 @@ mkYesod "App" [parseRoutes|
 /db                 DbR       GET
 /dbs/#Int           DbsR      GET
 
+#ifdef MONGODB
 /mongo/db           MongoDbR  GET
 /mongo/dbs/#Int     MongoDbsR GET
+#endif
 
 /mongo/raw/db       MongoRawDbR  GET
 /mongo/raw/dbs/#Int MongoRawDbsR GET
@@ -66,13 +72,12 @@ getJsonR = return $ object ["message" .= ("Hello, World!" :: Text)]
 
 
 getDbR :: Handler Value
-getDbR = getDb (intQuery runMySQL My.SqlBackendKey)
+getDbR = getDb (intQuery runMySQL toSqlKey)
 
-mkMongoKey :: Int64 -> BackendKey Mongo.MongoContext
-mkMongoKey = error "mkMongoKey"
-
+#ifdef MONGODB
 getMongoDbR :: Handler Value
-getMongoDbR = getDb (intQuery runMongoDB mkMongoKey)
+getMongoDbR = getDb (intQuery runMongoDB (getBy . UniqueId))
+#endif
 
 getMongoRawDbR :: Handler Value
 getMongoRawDbR = getDb rawMongoIntQuery
@@ -80,10 +85,12 @@ getMongoRawDbR = getDb rawMongoIntQuery
 getDbsR :: Int -> Handler Value
 getDbsR cnt = do
     App {..} <- getYesod
-    multiRandomHandler (intQuery runMySQL My.SqlBackendKey) cnt
+    multiRandomHandler (intQuery runMySQL toSqlKey) cnt
 
+#ifdef MONGODB
 getMongoDbsR :: Int -> Handler Value
-getMongoDbsR cnt = multiRandomHandler (intQuery runMongoDB mkMongoKey) cnt
+getMongoDbsR cnt = multiRandomHandler (intQuery runMongoDB (getBy . UniqueId)) cnt
+#endif
 
 getMongoRawDbsR :: Int -> Handler Value
 getMongoRawDbsR cnt = multiRandomHandler rawMongoIntQuery cnt
@@ -111,13 +118,12 @@ runMySQL f = do
 
 intQuery :: (MonadIO m, PersistEntity val, PersistStore backend
             , backend ~ PersistEntityBackend val
-            , ToBackendKey backend val
             ) =>
            (ReaderT backend m (Maybe val) -> m (Maybe (WorldGeneric backend)))
-           -> (Int64 -> BackendKey backend)
+           -> (Int64 -> Key val)
            -> Int64 -> m Value
 intQuery db toKey i = do
-    Just x <- db $ get $ fromBackendKey $ toKey i
+    Just x <- db $ get $ toKey i
     return $ jsonResult (worldRandomNumber x)
   where
     jsonResult :: Int -> Value
@@ -125,7 +131,7 @@ intQuery db toKey i = do
 
 rawMongoIntQuery :: Mongo.Val v => v -> Handler Value
 rawMongoIntQuery i = do
-    Just x <- runMongoDB $ Mongo.findOne (Mongo.select ["id" =: i] "world")
+    Just x <- runMongoDB $ Mongo.findOne (Mongo.select ["id" =: i] "World")
     return $ documentToJson x
 
 multiRandomHandler :: ToJSON a
