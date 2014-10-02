@@ -11,6 +11,7 @@ env:
     - TFB_DATABASE_USER=travis
     - TFB_CLIENT_IDENTITY_FILE=/home/travis/.ssh/id_rsa
     - TFB_DATABASE_IDENTITY_FILE=/home/travis/.ssh/id_rsa
+    - DEBIAN_FRONTEND=noninteractive
 
   matrix:
 
