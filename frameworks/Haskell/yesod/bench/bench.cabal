@@ -31,3 +31,5 @@ executable         bench
                  , pool-conduit                  >= 0.1.2
                  , network
                  , mongoDB
+                 , monad-logger
+                 , mtl

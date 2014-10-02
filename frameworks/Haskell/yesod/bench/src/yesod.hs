@@ -1,5 +1,6 @@
 {-# LANGUAGE EmptyDataDecls        #-}
 {-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuasiQuotes           #-}
@@ -7,10 +8,15 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main (main, resourcesApp, Widget, WorldId) where
 import           Control.Monad            (replicateM)
+import           Control.Monad.Logger     (runNoLoggingT)
 import           Control.Monad.Primitive  (PrimState)
+import           Control.Monad.Reader     (ReaderT)
 import           Data.Conduit.Pool        (Pool)
 import           Data.Int                 (Int64)
 import           Data.Text                (Text)
@@ -24,7 +30,7 @@ import           System.Environment       (getArgs)
 import qualified System.Random.MWC        as R
 import           Yesod                    hiding (Field)
 
-mkPersist sqlSettings [persistLowerCase|
+mkPersist sqlSettings { mpsGeneric = True } [persistLowerCase|
 World sql=World
     randomNumber Int sql=randomNumber
 |]
@@ -60,10 +66,13 @@ getJsonR = return $ object ["message" .= ("Hello, World!" :: Text)]
 
 
 getDbR :: Handler Value
-getDbR = getDb (intQuery runMySQL )
+getDbR = getDb (intQuery runMySQL My.SqlBackendKey)
+
+mkMongoKey :: Int64 -> BackendKey Mongo.MongoContext
+mkMongoKey = error "mkMongoKey"
 
 getMongoDbR :: Handler Value
-getMongoDbR = getDb (intQuery runMongoDB )
+getMongoDbR = getDb (intQuery runMongoDB mkMongoKey)
 
 getMongoRawDbR :: Handler Value
 getMongoRawDbR = getDb rawMongoIntQuery
@@ -71,10 +80,10 @@ getMongoRawDbR = getDb rawMongoIntQuery
 getDbsR :: Int -> Handler Value
 getDbsR cnt = do
     App {..} <- getYesod
-    multiRandomHandler (intQuery runMySQL) cnt
+    multiRandomHandler (intQuery runMySQL My.SqlBackendKey) cnt
 
 getMongoDbsR :: Int -> Handler Value
-getMongoDbsR cnt = multiRandomHandler (intQuery runMongoDB) cnt
+getMongoDbsR cnt = multiRandomHandler (intQuery runMongoDB mkMongoKey) cnt
 
 getMongoRawDbsR :: Int -> Handler Value
 getMongoRawDbsR cnt = multiRandomHandler rawMongoIntQuery cnt
@@ -100,13 +109,15 @@ runMySQL f = do
   App {..} <- getYesod
   My.runSqlPool f mySqlPool
 
-intQuery :: forall (m :: * -> *) (m1 :: * -> *) val backend.
-           (Monad m, PersistEntity val, PersistStore m1,
-            PersistEntityBackend val ~ PersistMonadBackend m1) =>
-           (m1 (Maybe val) -> m (Maybe (WorldGeneric backend)))
+intQuery :: (MonadIO m, PersistEntity val, PersistStore backend
+            , backend ~ PersistEntityBackend val
+            , ToBackendKey backend val
+            ) =>
+           (ReaderT backend m (Maybe val) -> m (Maybe (WorldGeneric backend)))
+           -> (Int64 -> BackendKey backend)
            -> Int64 -> m Value
-intQuery db i = do
-    Just x <- db $ get (Key $ PersistInt64 i)
+intQuery db toKey i = do
+    Just x <- db $ get $ fromBackendKey $ toKey i
     return $ jsonResult (worldRandomNumber x)
   where
     jsonResult :: Int -> Value
@@ -145,7 +156,7 @@ instance ToJSON Mongo.Value where
 main :: IO ()
 main = R.withSystemRandom $ \gen -> do
     [_cores, host] <- getArgs
-    myPool <- My.createMySQLPool My.defaultConnectInfo
+    myPool <- runNoLoggingT $ My.createMySQLPool My.defaultConnectInfo
         { My.connectUser = "benchmarkdbuser"
         , My.connectPassword = "benchmarkdbpass"
         , My.connectDatabase = "hello_world"
