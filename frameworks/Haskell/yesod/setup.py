@@ -5,8 +5,7 @@ import setup_util
 import os
 
 def start(args, logfile, errfile):
-  subprocess.check_call("cabal update", shell=True, cwd="yesod/bench", stderr=errfile, stdout=logfile)
-  subprocess.check_call("cabal install --jobs=1", shell=True, cwd="yesod/bench", stderr=errfile, stdout=logfile)
+  subprocess.check_call("bash -ex setup.sh", shell=True, cwd="yesod/bench", stderr=errfile, stdout=logfile)
 
   db_host = args.database_host
   threads = str(args.max_threads)
