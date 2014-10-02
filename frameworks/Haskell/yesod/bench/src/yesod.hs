@@ -41,7 +41,7 @@ World sql=World
 
 data App = App
     { appGen      :: !(R.Gen (PrimState IO))
-    , mySqlPool   :: !(Pool My.Connection)
+    , mySqlPool   :: !(Pool My.SqlBackend)
     , mongoDBPool :: !(Pool Mongo.Connection)
     }
 
@@ -72,7 +72,7 @@ getJsonR = return $ object ["message" .= ("Hello, World!" :: Text)]
 
 
 getDbR :: Handler Value
-getDbR = getDb (intQuery runMySQL toSqlKey)
+getDbR = getDb (intQuery runMySQL My.toSqlKey)
 
 #ifdef MONGODB
 getMongoDbR :: Handler Value
@@ -85,7 +85,7 @@ getMongoRawDbR = getDb rawMongoIntQuery
 getDbsR :: Int -> Handler Value
 getDbsR cnt = do
     App {..} <- getYesod
-    multiRandomHandler (intQuery runMySQL toSqlKey) cnt
+    multiRandomHandler (intQuery runMySQL My.toSqlKey) cnt
 
 #ifdef MONGODB
 getMongoDbsR :: Int -> Handler Value
