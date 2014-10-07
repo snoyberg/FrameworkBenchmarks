@@ -63,7 +63,7 @@ mkYesod "App" [parseRoutes|
 
 fakeInternalState :: InternalState
 fakeInternalState = unsafePerformIO $ newIORef $ error "fakeInternalState forced"
-{-# NOINLINE internalState #-}
+{-# NOINLINE fakeInternalState #-}
 
 instance Yesod App where
     makeSessionBackend _ = return Nothing
@@ -112,8 +112,7 @@ getDb :: (Int64 -> Handler Value) -> Handler Value
 getDb query = do
     app <- getYesod
     i <- liftIO (randomNumber (appGen app))
-    query i
-    {-
+    value <- query i
     sendWaiResponse
         $ responseBuilder
             status200
@@ -121,7 +120,6 @@ getDb query = do
         $ copyByteString
         $ L.toStrict
         $ encode value
-        -}
 
 
 runMongoDB :: Mongo.Action Handler b -> Handler b

@@ -39,3 +39,4 @@ executable         bench
                  , blaze-builder
                  , bytestring                    >= 0.10
                  , resource-pool
+                 , resourcet
