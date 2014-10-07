@@ -18,6 +18,7 @@ import           Control.Monad            (replicateM)
 import           Control.Monad.Logger     (runNoLoggingT)
 import           Control.Monad.Primitive  (PrimState)
 import           Control.Monad.Reader     (ReaderT)
+import           Control.Monad.Trans.Resource (InternalState)
 import           Data.Aeson               (encode)
 import qualified Data.ByteString.Lazy     as L
 import           Data.Conduit.Pool        (Pool, createPool)
@@ -34,6 +35,8 @@ import qualified Network.Wai.Handler.Warp as Warp
 import           System.Environment       (getArgs)
 import qualified System.Random.MWC        as R
 import           Yesod                    hiding (Field)
+import Data.IORef (newIORef)
+import System.IO.Unsafe (unsafePerformIO)
 
 mkPersist sqlSettings { mpsGeneric = True } [persistLowerCase|
 World sql=World
@@ -58,6 +61,10 @@ mkYesod "App" [parseRoutes|
 /mongo/raw/dbs/#Int MongoRawDbsR GET
 |]
 
+fakeInternalState :: InternalState
+fakeInternalState = unsafePerformIO $ newIORef $ error "fakeInternalState forced"
+{-# NOINLINE internalState #-}
+
 instance Yesod App where
     makeSessionBackend _ = return Nothing
     {-# INLINE makeSessionBackend #-}
@@ -67,10 +74,8 @@ instance Yesod App where
     {-# INLINE yesodMiddleware #-}
     cleanPath _ = Right
     {-# INLINE cleanPath #-}
-    {- FIXME why does this break MySQL?
-    yesodWithInternalState _ _ = ($ error "InternalState used")
+    yesodWithInternalState _ _ = ($ fakeInternalState)
     {-# INLINE yesodWithInternalState #-}
-    -}
     maximumContentLength _ _ = Nothing
     {-# INLINE maximumContentLength #-}
 
