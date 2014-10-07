@@ -20,12 +20,12 @@ import           Control.Monad.Primitive  (PrimState)
 import           Control.Monad.Reader     (ReaderT)
 import           Data.Aeson               (encode)
 import qualified Data.ByteString.Lazy     as L
-import           Data.Conduit.Pool        (Pool)
+import           Data.Conduit.Pool        (Pool, createPool)
 import           Data.Int                 (Int64)
+import           Data.Pool                (withResource)
 import           Data.Text                (Text)
 import           Database.MongoDB         (Field ((:=)), (=:))
 import qualified Database.MongoDB         as Mongo
-import qualified Database.Persist.MongoDB as Mongo
 import qualified Database.Persist.MySQL   as My
 import           Network                  (PortID (PortNumber))
 import           Network.HTTP.Types
@@ -38,16 +38,12 @@ import           Yesod                    hiding (Field)
 mkPersist sqlSettings { mpsGeneric = True } [persistLowerCase|
 World sql=World
     randomNumber Int sql=randomNumber
-#ifdef MONGODB
-    id           Int64
-    UniqueId
-#endif
 |]
 
 data App = App
     { appGen      :: !(R.Gen (PrimState IO))
     , mySqlPool   :: !(Pool My.SqlBackend)
-    , mongoDBPool :: !(Pool Mongo.Connection)
+    , mongoDBPool :: !(Pool Mongo.Pipe)
     }
 
 -- | Not actually using the non-raw mongoDB.
@@ -57,11 +53,6 @@ mkYesod "App" [parseRoutes|
 
 /db                 DbR       GET
 /dbs/#Int           DbsR      GET
-
-#ifdef MONGODB
-/mongo/db           MongoDbR  GET
-/mongo/dbs/#Int     MongoDbsR GET
-#endif
 
 /mongo/raw/db       MongoRawDbR  GET
 /mongo/raw/dbs/#Int MongoRawDbsR GET
@@ -76,6 +67,10 @@ instance Yesod App where
     {-# INLINE yesodMiddleware #-}
     cleanPath _ = Right
     {-# INLINE cleanPath #-}
+    {- FIXME why does this break MySQL?
+    yesodWithInternalState _ _ = ($ error "InternalState used")
+    {-# INLINE yesodWithInternalState #-}
+    -}
     maximumContentLength _ _ = Nothing
     {-# INLINE maximumContentLength #-}
 
@@ -93,11 +88,6 @@ getJsonR = sendWaiResponse
 getDbR :: Handler Value
 getDbR = getDb (intQuery runMySQL My.toSqlKey)
 
-#ifdef MONGODB
-getMongoDbR :: Handler Value
-getMongoDbR = getDb (intQuery runMongoDB (getBy . UniqueId))
-#endif
-
 getMongoRawDbR :: Handler Value
 getMongoRawDbR = getDb rawMongoIntQuery
 
@@ -105,11 +95,6 @@ getDbsR :: Int -> Handler Value
 getDbsR cnt = do
     App {..} <- getYesod
     multiRandomHandler (intQuery runMySQL My.toSqlKey) cnt
-
-#ifdef MONGODB
-getMongoDbsR :: Int -> Handler Value
-getMongoDbsR cnt = multiRandomHandler (intQuery runMongoDB (getBy . UniqueId)) cnt
-#endif
 
 getMongoRawDbsR :: Int -> Handler Value
 getMongoRawDbsR cnt = multiRandomHandler rawMongoIntQuery cnt
@@ -123,12 +108,22 @@ getDb query = do
     app <- getYesod
     i <- liftIO (randomNumber (appGen app))
     query i
+    {-
+    sendWaiResponse
+        $ responseBuilder
+            status200
+            [("Content-Type", typeJson)]
+        $ copyByteString
+        $ L.toStrict
+        $ encode value
+        -}
 
 
 runMongoDB :: Mongo.Action Handler b -> Handler b
 runMongoDB f = do
   App {..} <- getYesod
-  Mongo.runMongoDBPoolDef f mongoDBPool
+  withResource mongoDBPool $ \pipe ->
+    Mongo.access pipe Mongo.ReadStaleOk "hello_world" f
 
 runMySQL :: My.SqlPersistT Handler b -> Handler b
 runMySQL f = do
@@ -180,7 +175,7 @@ instance ToJSON Mongo.Value where
 
 main :: IO ()
 main = R.withSystemRandom $ \gen -> do
-    [_cores, host] <- getArgs
+    [cores, host] <- getArgs
     myPool <- runNoLoggingT $ My.createMySQLPool My.defaultConnectInfo
         { My.connectUser = "benchmarkdbuser"
         , My.connectPassword = "benchmarkdbpass"
@@ -188,11 +183,12 @@ main = R.withSystemRandom $ \gen -> do
         , My.connectHost = host
         } 1000
 
-    mongoPool <- Mongo.createMongoDBPool "hello_world" host (PortNumber 27017)
-        (Just (Mongo.MongoAuth "benchmarkdbuser" "benchmarkdbpass"))
-           1  -- what is the optimal stripe count? 1 is said to be a good default
-           1000
-           3  -- 3 second timeout
+    mongoPool <- createPool
+        (Mongo.connect $ Mongo.Host host $ PortNumber 27017)
+        Mongo.close
+        (read cores) -- what is the optimal stripe count? 1 is said to be a good default
+        3  -- 3 second timeout
+        1000
 
     app <- toWaiAppPlain App
         { appGen = gen
