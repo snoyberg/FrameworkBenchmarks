@@ -34,3 +34,8 @@ executable         bench
                  , mongoDB
                  , monad-logger
                  , mtl
+                 , wai
+                 , http-types
+                 , aeson
+                 , blaze-builder
+                 , bytestring                    >= 0.10

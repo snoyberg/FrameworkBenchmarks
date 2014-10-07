@@ -13,10 +13,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main (main, resourcesApp, Widget, WorldId) where
+import           Blaze.ByteString.Builder
 import           Control.Monad            (replicateM)
 import           Control.Monad.Logger     (runNoLoggingT)
 import           Control.Monad.Primitive  (PrimState)
 import           Control.Monad.Reader     (ReaderT)
+import           Data.Aeson               (encode)
+import qualified Data.ByteString.Lazy     as L
 import           Data.Conduit.Pool        (Pool)
 import           Data.Int                 (Int64)
 import           Data.Text                (Text)
@@ -25,6 +28,8 @@ import qualified Database.MongoDB         as Mongo
 import qualified Database.Persist.MongoDB as Mongo
 import qualified Database.Persist.MySQL   as My
 import           Network                  (PortID (PortNumber))
+import           Network.HTTP.Types
+import           Network.Wai
 import qualified Network.Wai.Handler.Warp as Warp
 import           System.Environment       (getArgs)
 import qualified System.Random.MWC        as R
@@ -71,10 +76,18 @@ instance Yesod App where
     {-# INLINE yesodMiddleware #-}
     cleanPath _ = Right
     {-# INLINE cleanPath #-}
+    maximumContentLength _ _ = Nothing
+    {-# INLINE maximumContentLength #-}
 
-getJsonR :: Handler TypedContent
-getJsonR = return $ TypedContent typeJson
-         $ toContent $ object ["message" .= ("Hello, World!" :: Text)]
+getJsonR :: Handler ()
+getJsonR = sendWaiResponse
+         $ responseBuilder
+            status200
+            [("Content-Type", typeJson)]
+         $ copyByteString
+         $ L.toStrict
+         $ encode
+         $ object ["message" .= ("Hello, World!" :: Text)]
 
 
 getDbR :: Handler Value
